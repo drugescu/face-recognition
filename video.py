@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 from PIL import ImageFont, ImageDraw, Image
 import keras
+from keras.models import load_model
 import mtcnn.mtcnn
 import time
 import sys
@@ -29,8 +30,11 @@ DETECTION_FRAMES = 5
 STATE_PASSIVE = 0
 STATE_LEARNING = 1
 STATE_RECOGNITION = 2
+STATE_VERIFICATION = 3
 
 state = STATE_PASSIVE
+
+face = 0
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -99,10 +103,6 @@ def extract_face(image, detector_instance, required_size=(112, 112)):
     face_array = np.asarray(img_face)
 
     return (results, face_array)
-
-
-def do_verification(face):
-    return
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -174,6 +174,7 @@ def recognition_menu():
     global counter
     global state
     global STEPS
+    global face
 
     # Adjust number of steps
     STEPS = 2
@@ -233,14 +234,71 @@ def recognition_menu():
         if timer_tick >= DETECTION_FRAMES:
             old_image = pil_text_shadow(old_image, 228, 420, "Ubuntu-L.ttf", 30, white, "Face detected")
             cv2.imshow('frame', old_image)
-            sleep(2000)
-            do_verification(face)
+
+            state = STATE_VERIFICATION
             return
         else:
             # Show image
             cv2.imshow('frame', image)
             # Retain old image
             old_image = image
+
+        # Resize window
+        cv2.resizeWindow('frame', 1920, 1080 - 30)
+
+        # Get input
+        k = cv2.waitKey(1) & 0xFF
+        if k == ord('b'):
+            state = STATE_PASSIVE
+            return
+
+        # Input processing
+        if k == ord('q'):
+            sys.exit(0)
+
+    return
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Verification state
+# ----------------------------------------------------------------------------------------------------------------------
+
+def verify(face):
+    # load the model
+    model = load_model('keras-facenet/model/facenet_keras.h5')
+    # summarize input and output shape
+    print(model.inputs)
+    print(model.outputs)
+
+    return
+
+# Interactive menu showing access granted or denied
+def do_verification():
+    global state
+
+    # Do verification
+    verify(face)
+
+    sys.exit(0)
+
+    # Display stuff and enable interactivity
+    while True:
+
+        # Capture frame-by-frame
+        ret, frame = cap.read()
+
+        # Make it all black
+        frame[:] = (0, 0, 0)
+        image = frame
+
+        # Display the resulting frame
+        cv2.namedWindow('frame', cv2.WINDOW_NORMAL)
+
+        # Display other stuff
+        image = pil_text(image, 170, 210, "Ubuntu-L.ttf", 40, (0, 255, 0), "ACCESS GRANTED")
+
+        # Show image
+        cv2.imshow('frame', image)
 
         # Resize window
         cv2.resizeWindow('frame', 1920, 1080 - 30)
@@ -266,12 +324,14 @@ while (True):
 
     # If state is passive, wait for input on what to do and display standard message
     if state == STATE_PASSIVE:
-        # Our operations on the frame come here
         passive_menu()
 
     # Recognition state
     if state == STATE_RECOGNITION:
         recognition_menu()
+
+    if state == STATE_VERIFICATION:
+        do_verification()
 
     # Input processing
     # if cv2.waitKey(1) & 0xFF == ord('q'):
