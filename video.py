@@ -1,3 +1,12 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# Face detector/recognizer
+
+# Starting point: https://machinelearningmastery.com/how-to-develop-a-face-recognition-system-using-facenet-in-keras-and-an-svm-classifier/
+
+# Used also my own .ipynb files as starting points
+
+# ----------------------------------------------------------------------------------------------------------------------
+
 # Initializations
 import numpy as np
 import cv2
@@ -7,9 +16,44 @@ from keras.models import load_model
 import mtcnn.mtcnn
 import time
 import sys
+import cryptography
+from cryptography.fernet import Fernet
 
 print("MTCNN version :", mtcnn.__version__)
 print("Keras version :", keras.__version__)
+
+# Generate a new key - do this once, write it down, and store it here ecrypted - base64 encoded key
+key = b'nP2H4k_dl2-SNeF5TpLALSbgsHBxlmpouZmriC92748='
+#key = Fernet.generate_key()
+print(key)
+# Encryption is done like this
+#message = "my deep dark secret".encode()
+#f = Fernet(key)
+#encrypted = f.encrypt(message)
+# Decryption is done like this
+#encrypted = b"...encrypted bytes..."
+#f = Fernet(key)
+#decrypted = f.decrypt(encrypted)
+# Cryptographic key should be store in some other ECU of the car and shared over wire on demand, tied to vehicle ID perhaps
+# Ideally, car should connect to the internt to allow face recognition and disallow it otherwise. And store key on a server
+#   accessible with vehicle ID. Face Recognition requests should then be logged and possible SMS sent.
+
+thresholds = np.arange(1, -1, 0.01)
+print(thresholds)
+sys.exit(0)
+
+# Load facenet model
+class model_class():
+    def __init__(self):
+        return
+
+    inputs = 0
+    outputs = 0
+
+model = model_class()
+
+model = load_model('keras-facenet/model/facenet_keras.h5')
+print("Loaded keras-facenet.h5 model")
 
 # Variables
 THICKNESS = 10
@@ -70,39 +114,42 @@ def pil_text_shadow(image, x, y, font, size, color, text):
 
 
 # Extract face from an image
-def extract_face(image, detector_instance, required_size=(112, 112)):
+def extract_face(image, detector_instance, required_size=(160, 160)):
+    # Load detector
+    # global detector
+
     # Load image
     # image = Image.open(filename)
     # image = image.convert('RGB')
     pixels = np.asarray(image)
 
     # Detect face
-    detector = detector_instance
-    results = detector.detect_faces(pixels)
+    det = detector_instance
+    results = det.detect_faces(pixels)
 
     # If multiple faces in picture, output error
-    if (len(results) > 1):
+    if len(results) > 1:
         # print("Detected more than one face!")
         return ["ErrorM"]
 
-    if (len(results) == 0):
+    if len(results) == 0:
         # print("Detected no faces!")
         return ["Error0"]
 
     # Extract indices of face
     x1, y1, width, height = results[0]['box']
     x1, y1 = abs(x1), abs(y1)
-    x2, y2 = x1 + width, y1 + width
+    x2, y2 = x1 + width, y1 + height
 
     # Extract face
-    face = pixels[y1:y2, x1:x2]
+    local_face = pixels[y1:y2, x1:x2]
 
     # Resize to proper dimension
-    img_face = Image.fromarray(face)
+    img_face = Image.fromarray(local_face)
     img_face = img_face.resize(required_size)
     face_array = np.asarray(img_face)
 
-    return (results, face_array)
+    return results, face_array
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -214,7 +261,7 @@ def recognition_menu():
         image = pil_text_shadow(image, 228, 450, "Ubuntu-L.ttf", 20, white, "B - Back, Q - Quit")
 
         # Draw detections
-        face = extract_face(frame, detector, (112, 112))
+        face = extract_face(frame, detector)
 
         if face != ["ErrorM"] and face != ["Error0"]:
             box = face[0][0]["box"]
@@ -263,23 +310,56 @@ def recognition_menu():
 # Verification state
 # ----------------------------------------------------------------------------------------------------------------------
 
-def verify(face):
+def normalize(current_face):
+    # Scale pixel values
+    face_pixels = current_face.astype('float32')
+
+    # standardize pixel values across channels (global)
+    mean, std = face_pixels.mean(), face_pixels.std()
+    face_pixels = (face_pixels - mean) / std
+
+    return face_pixels
+
+
+def get_embedding(current_face):
+    # First normalize
+    norm_face = normalize(current_face)
+
+    # Expand dimensions into samples, for now only one
+    samples = np.expand_dims(norm_face, axis = 0)
+
+    # Make prediction to get embedding
+    yhat = model.predict(samples)
+
+    # Return embedding
+    return yhat[0]
+
+
+def verify(current_face):
     # load the model
-    model = load_model('keras-facenet/model/facenet_keras.h5')
+    # do this at load
+
     # summarize input and output shape
     print(model.inputs)
     print(model.outputs)
 
+    # Get embedding
+    embedding = get_embedding(current_face)
+    print("Embedding = ", embedding, ", of size = ", len(embedding))
+
+    # Go through database of identities and embeddings and verify yes or no
+
     return
+
 
 # Interactive menu showing access granted or denied
 def do_verification():
     global state
 
     # Do verification
-    verify(face)
+    verify(face[1])
 
-    sys.exit(0)
+    # sys.exit(0)
 
     # Display stuff and enable interactivity
     while True:
@@ -296,6 +376,11 @@ def do_verification():
 
         # Display other stuff
         image = pil_text(image, 170, 210, "Ubuntu-L.ttf", 40, (0, 255, 0), "ACCESS GRANTED")
+
+        # Display face
+        y_offset = 250
+        x_offset = 250
+        image[y_offset:y_offset + face[1].shape[0], x_offset:x_offset + face[1].shape[1]] = face[1]
 
         # Show image
         cv2.imshow('frame', image)
