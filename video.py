@@ -1,13 +1,15 @@
 # ----------------------------------------------------------------------------------------------------------------------
 # Face detector/recognizer
+# ---------------------------------------------------------------------------------------------------------------------
 
 # Starting point: https://machinelearningmastery.com/how-to-develop-a-face-recognition-system-using-facenet-in-keras-and-an-svm-classifier/
 
 # Used also my own .ipynb files as starting points
 
 # ----------------------------------------------------------------------------------------------------------------------
-
 # Initializations
+# ---------------------------------------------------------------------------------------------------------------------
+
 import numpy as np
 import cv2
 from PIL import ImageFont, ImageDraw, Image
@@ -18,28 +20,69 @@ import time
 import sys
 import cryptography
 from cryptography.fernet import Fernet
+import os.path
 
 print("MTCNN version :", mtcnn.__version__)
 print("Keras version :", keras.__version__)
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Cryptography
+# ---------------------------------------------------------------------------------------------------------------------
 
 # Generate a new key - do this once, write it down, and store it here ecrypted - base64 encoded key
 key = b'nP2H4k_dl2-SNeF5TpLALSbgsHBxlmpouZmriC92748='
 #key = Fernet.generate_key()
 print(key)
+
 # Encryption is done like this
 #message = "my deep dark secret".encode()
 #f = Fernet(key)
 #encrypted = f.encrypt(message)
+
 # Decryption is done like this
 #encrypted = b"...encrypted bytes..."
 #f = Fernet(key)
 #decrypted = f.decrypt(encrypted)
+
 # Cryptographic key should be store in some other ECU of the car and shared over wire on demand, tied to vehicle ID perhaps
 # Ideally, car should connect to the internt to allow face recognition and disallow it otherwise. And store key on a server
 #   accessible with vehicle ID. Face Recognition requests should then be logged and possible SMS sent.
 
-thresholds = np.arange(1, -1, 0.01)
-print(thresholds)
+# ---------------------------------------------------------------------------------------------------------------------
+# Embeddings file
+# ---------------------------------------------------------------------------------------------------------------------
+
+if os.path.exists("embeddings.npz"):
+    embeddings_file = np.load("embeddings.npz")
+
+    # Size
+    identities = np.asarray(list(embeddings_file['ids']))
+    size_ids = len(embeddings_file[embeddings_file.files[0]])
+    if size_ids == 1:
+        print ("There is 1 identity recorded in the database")
+    else:
+        print ("There are ", size_ids, " identities recorded in the database.")
+    if size_ids == 0:
+        print("Error! No identities in file!")
+        sys.exit(0)
+
+    for i in range(size_ids):
+        size_emb = len(embeddings_file[embeddings_file.files[0]][i])
+        print("There are ", size_emb, " embeddings recorded in the database for ID ", i + 1)
+        #print(identities[identities.files[0]][i])
+
+    # Close file
+    embeddings_file.close()
+
+    # Print numpy array of embeddings and identities
+    print(identities)
+else:
+    identities = []
+    print ("There are no embeddings recorded in the database.")
+
+# Threshold
+thresholds = 0.5#np.arange(1, -1, 0.01)
+print("Threshold = ", thresholds)
 sys.exit(0)
 
 # Load facenet model
@@ -73,7 +116,7 @@ DETECTION_FRAMES = 5
 # States of program
 STATE_PASSIVE = 0
 STATE_LEARNING = 1
-STATE_RECOGNITION = 2
+STATE_DETECTION = 2
 STATE_VERIFICATION = 3
 
 state = STATE_PASSIVE
@@ -203,7 +246,12 @@ def passive_menu():
         # Get input
         k = cv2.waitKey(1) & 0xFF
         if k == ord('u'):
-            state = STATE_RECOGNITION
+            if len(identities) > 0:
+                state = STATE_DETECTION
+                return
+
+        if k == ord('r'):
+            state = STATE_LEARNING
             return
 
         # Input processing
@@ -214,10 +262,10 @@ def passive_menu():
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Recognition state
+# Detection state
 # ----------------------------------------------------------------------------------------------------------------------
 
-def recognition_menu():
+def detection_menu():
     global counter
     global state
     global STEPS
@@ -238,7 +286,6 @@ def recognition_menu():
 
         # Capture frame-by-frame
         ret, frame = cap.read()
-
         image = frame
 
         # Display the resulting frame
@@ -353,7 +400,7 @@ def verify(current_face):
 
 
 # Interactive menu showing access granted or denied
-def do_verification():
+def verification_menu():
     global state
 
     # Do verification
@@ -402,6 +449,121 @@ def do_verification():
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Learning State - Register a new identity
+# ----------------------------------------------------------------------------------------------------------------------
+
+identities = []
+
+def learning_menu():
+    global state
+    global counter
+    global STEPS
+    global face
+    STEPS = 3
+
+    messages = [
+        "Face camera straight with neutral face",
+        "Face camera straight with eyes closed",
+        "Face camera slightly sideways",
+        "Face camera and smile",
+        "If you have glasses, take them off",
+        "Turn reading light on and look slightly down",
+        ""
+    ]
+
+    MAX_MESSAGES  = 5
+    current_message = 0
+    timer_tick = 0
+    new_identity = []
+
+    while True:
+
+        # Capture frame-by-frame
+        ret, frame = cap.read()
+        image = frame
+
+        # Display the resulting frame
+        cv2.namedWindow('frame', cv2.WINDOW_NORMAL)
+
+        # Draw other stuff - BGR
+        if timer_tick < DETECTION_FRAMES:
+            counter = counter + 1
+
+        if counter > STEPS:
+            counter = -STEPS
+
+        if counter < STEPS:
+            image = cv2.rectangle(image, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT), white, THICKNESS)
+            image = pil_text_shadow(image, 160, 20, "Ubuntu-L.ttf", 20, white, messages[current_message])
+        # Text
+        image = pil_text_shadow(image, 248, 430, "Ubuntu-L.ttf", 20, white, "B - Back, Q - Quit")
+        image = pil_text_shadow(image, 254, 450, "Ubuntu-L.ttf", 20, white, "T - Take Photo")
+
+        # Draw detections
+        face = extract_face(frame, detector)
+
+        if face != ["ErrorM"] and face != ["Error0"]:
+            box = face[0][0]["box"]
+            if box is not None:
+                # print(detections)
+                timer_tick = timer_tick + 1
+                image = cv2.rectangle(image,
+                                      (box[0], box[1]),
+                                      (box[0] + box[2], box[1] + box[3]),
+                                      white, THICKNESS_FACEBOX)
+            else:
+                timer_tick = 0
+        else:
+            timer_tick = 0
+
+        # Show image
+        cv2.imshow('frame', image)
+
+        # Resize window
+        cv2.resizeWindow('frame', 1920, 1080 - 30)
+
+        # Exit window after performing final processing - encryption on
+        if current_message > MAX_MESSAGES:
+            # Store embeddings
+            print(np.asarray(new_identity))
+            identities.append(np.asarray(new_identity))
+            new_identity.clear()
+            np.savez_compressed('embeddings', ids = np.asarray(identities))
+            state = STATE_PASSIVE
+            return
+
+        # Get input
+        k = cv2.waitKey(1) & 0xFF
+        if k == ord('b'):
+            state = STATE_PASSIVE
+            return
+
+        # Record new photo
+        if k == ord('t'):
+            if timer_tick >= DETECTION_FRAMES:
+                current_face = face[1]
+
+                # Get face embedding
+                embedding = get_embedding(current_face)
+                #print("Embedding = ", embedding)
+
+                # Append embedding to new identity
+                new_identity.append(embedding)
+                print("Embeddings size = ", len(new_identity))
+
+                # Increment message and take new photo
+                current_message = current_message + 1
+
+                # Queue ROC analysis
+
+        # Input processing
+        if k == ord('q'):
+            sys.exit(0)
+
+    return
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Main body
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -411,12 +573,16 @@ while (True):
     if state == STATE_PASSIVE:
         passive_menu()
 
-    # Recognition state
-    if state == STATE_RECOGNITION:
-        recognition_menu()
+    # Detection state
+    if state == STATE_DETECTION:
+        detection_menu()
 
+    # Verification state - validate identity and grant access
     if state == STATE_VERIFICATION:
-        do_verification()
+        verification_menu()
+
+    if state == STATE_LEARNING:
+        learning_menu()
 
     # Input processing
     # if cv2.waitKey(1) & 0xFF == ord('q'):
