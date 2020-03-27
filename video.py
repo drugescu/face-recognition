@@ -6,6 +6,8 @@
 
 # Used also my own .ipynb files as starting points
 
+# Should move on to use tensorflow 2.0
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Initializations
 # ---------------------------------------------------------------------------------------------------------------------
@@ -13,17 +15,22 @@
 import numpy as np
 import cv2
 from PIL import ImageFont, ImageDraw, Image
-import keras
-from keras.models import load_model
 import mtcnn.mtcnn
 import time
 import sys
 import cryptography
 from cryptography.fernet import Fernet
 import os.path
+#import tensorflow as tf
+import keras
+from keras.models import load_model
+import tensorflow as tf
+
+#tf.enable_eager_execution()
 
 print("MTCNN version :", mtcnn.__version__)
 print("Keras version :", keras.__version__)
+print("Tensorflow version :", tf.__version__)
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Cryptography
@@ -52,6 +59,8 @@ print(key)
 # Embeddings file
 # ---------------------------------------------------------------------------------------------------------------------
 
+identities = np.asarray([])
+
 if os.path.exists("embeddings.npz"):
     embeddings_file = np.load("embeddings.npz")
 
@@ -77,13 +86,16 @@ if os.path.exists("embeddings.npz"):
     # Print numpy array of embeddings and identities
     print(identities)
 else:
-    identities = []
+    identities = np.asarray([])
     print ("There are no embeddings recorded in the database.")
 
-# Threshold
-thresholds = 0.5#np.arange(1, -1, 0.01)
+# ---------------------------------------------------------------------------------------------------------------------
+# Threshold and model
+# ---------------------------------------------------------------------------------------------------------------------
+
+thresholds = 0.58
 print("Threshold = ", thresholds)
-sys.exit(0)
+#sys.exit(0)
 
 # Load facenet model
 class model_class():
@@ -93,12 +105,15 @@ class model_class():
     inputs = 0
     outputs = 0
 
-model = model_class()
+#model = model_class()
 
 model = load_model('keras-facenet/model/facenet_keras.h5')
 print("Loaded keras-facenet.h5 model")
 
+# ---------------------------------------------------------------------------------------------------------------------
 # Variables
+# ---------------------------------------------------------------------------------------------------------------------
+
 THICKNESS = 10
 THICKNESS_FACEBOX = 1
 STEPS = 3
@@ -122,7 +137,8 @@ STATE_VERIFICATION = 3
 state = STATE_PASSIVE
 
 face = 0
-
+FACE_PIXELS = 1
+NO_MATCH = -1
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Useful functions
@@ -385,6 +401,9 @@ def get_embedding(current_face):
 def verify(current_face):
     # load the model
     # do this at load
+    global identities
+
+    result = NO_MATCH
 
     # summarize input and output shape
     print(model.inputs)
@@ -395,8 +414,26 @@ def verify(current_face):
     print("Embedding = ", embedding, ", of size = ", len(embedding))
 
     # Go through database of identities and embeddings and verify yes or no
+    # Assumption - do not allow two identities of the same person in the database - detect his situation at registration
+    for id in range(len(identities)):
+        loss = keras.losses.cosine_similarity(
+            identities[id],
+            embedding,
+        )
 
-    return
+        losspy = -loss.eval(session=tf.Session())
+
+        print(" Verifying identity ", id)
+        #print("   Embedding ", identities[id][emb_id])
+        print("   Cosine similarity ", losspy)
+
+        # How many embeddings have thresholds surpassed
+        matches = [x for x in losspy if x > thresholds]
+
+        if (len(matches) > 0):
+            result = id
+
+    return result
 
 
 # Interactive menu showing access granted or denied
@@ -404,7 +441,7 @@ def verification_menu():
     global state
 
     # Do verification
-    verify(face[1])
+    match = verify(face[FACE_PIXELS])
 
     # sys.exit(0)
 
@@ -422,7 +459,10 @@ def verification_menu():
         cv2.namedWindow('frame', cv2.WINDOW_NORMAL)
 
         # Display other stuff
-        image = pil_text(image, 170, 210, "Ubuntu-L.ttf", 40, (0, 255, 0), "ACCESS GRANTED")
+        if (match != NO_MATCH):
+            image = pil_text(image, 170, 210, "Ubuntu-L.ttf", 40, (0, 255, 0), "ACCESS GRANTED")
+        else:
+            image = pil_text(image, 170, 210, "Ubuntu-L.ttf", 40, (255, 0, 0), "ACCESS DENIED")
 
         # Display face
         y_offset = 250
@@ -452,13 +492,12 @@ def verification_menu():
 # Learning State - Register a new identity
 # ----------------------------------------------------------------------------------------------------------------------
 
-identities = []
-
 def learning_menu():
     global state
     global counter
     global STEPS
     global face
+    global identities
     STEPS = 3
 
     messages = [
@@ -526,7 +565,14 @@ def learning_menu():
         if current_message > MAX_MESSAGES:
             # Store embeddings
             print(np.asarray(new_identity))
-            identities.append(np.asarray(new_identity))
+            print("Previous identities = ", len(identities), " = ", identities)
+
+            if len(identities) != 0:
+                identities = np.insert(identities, identities.shape[0], np.asarray(new_identity), axis = 0)
+            else:
+                identities = np.expand_dims(np.asarray(new_identity), axis = 0)
+
+            print("New identities = ", len(identities), " = ", identities)
             new_identity.clear()
             np.savez_compressed('embeddings', ids = np.asarray(identities))
             state = STATE_PASSIVE
