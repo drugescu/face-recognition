@@ -25,6 +25,8 @@ import os.path
 import keras
 from keras.models import load_model
 import tensorflow as tf
+import sklearn
+import sklearn.datasets
 
 #tf.enable_eager_execution()
 
@@ -93,9 +95,67 @@ else:
 # Threshold and model
 # ---------------------------------------------------------------------------------------------------------------------
 
+# pre-roc dataset pull
+# try: "sudo pip install --upgrade certifi" and then if certificate issues continue, import ssl and _create_unverified_context
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
+# Slice was found empirically
+lfw_people = sklearn.datasets.fetch_lfw_people(min_faces_per_person = 10, color = True, resize = 1.0, slice_ = (slice(80, 188, 3), slice(80, 170, 3)))
+print("Loaded LFW dataset from sklearn.")
+print("Size = ", len(lfw_people.images))
+print("Size = ", len(lfw_people.target))
+print(lfw_people.target[0], ", ",lfw_people.target_names[0], ", image = ",  lfw_people.images[0], " of shape = ", lfw_people.images[0].shape)
+lfw_people.images_resized = []
+
+for i in range(len(lfw_people.images)):
+    lfw_people.images_resized.append(cv2.resize(lfw_people.images[i] / 255.0, (160, 160), cv2.INTER_CUBIC))
+
+print(lfw_people.target[0], ", ",lfw_people.target_names[0], ", image = ",  lfw_people.images_resized[0], " of shape = ", lfw_people.images_resized[0].shape)
+
+vstck = np.vstack(lfw_people.images_resized[30:60])
+
+# Display the resulting frame
+def debugDisplayLFW():
+    global vstck
+    b = False
+    while b is not True:
+        # Show window
+        cv2.namedWindow('frameTemp', cv2.WINDOW_NORMAL)
+        #cv2_im_processed = cv2.cvtColor(lfw_people.images[0]/255.0, cv2.COLOR_RGB2BGR)
+
+        # Show image
+        #cv2.imshow('frameTemp', cv2_2)
+        cv2.imshow('frameTemp', vstck)
+
+        k = cv2.waitKey(1) & 0xFF
+        # Input processing
+        if k == ord('q'):
+            b = True
+
+
+# debugDisplayLFW() # uncomment this to view image selection
+
+# Save images
+def saveLFW():
+    counter_dict = {}
+    for i in range(len(lfw_people.images_resized)):
+        if (lfw_people.target[i]) not in counter_dict.keys():
+            counter_dict[lfw_people.target[i]] = 0
+
+        counter_dict[lfw_people.target[i]] = counter_dict[lfw_people.target[i]] + 1
+        cv2.imwrite("./resized/" + str(counter_dict[lfw_people.target[i]]) + ".png", lfw_people.images_resized[i])
+
+    print("Wrote resized images")
+
+
+# Call the function to save the resized images
+saveLFW()
+
+# Threshold
 thresholds = 0.58
 print("Threshold = ", thresholds)
-#sys.exit(0)
+sys.exit(0)
 
 # Load facenet model
 class model_class():
@@ -492,6 +552,10 @@ def verification_menu():
 # Learning State - Register a new identity
 # ----------------------------------------------------------------------------------------------------------------------
 
+def roc_analysis():
+    lfw_people = sklearn.datasets.fetch_lfw_people(min_faces_per_person=70, resize=0.4)
+
+
 def learning_menu():
     global state
     global counter
@@ -601,6 +665,7 @@ def learning_menu():
                 current_message = current_message + 1
 
                 # Queue ROC analysis
+                roc_analysis()
 
         # Input processing
         if k == ord('q'):
