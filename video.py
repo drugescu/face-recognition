@@ -144,7 +144,7 @@ def saveLFW():
             counter_dict[lfw_people.target[i]] = 0
 
         counter_dict[lfw_people.target[i]] = counter_dict[lfw_people.target[i]] + 1
-        cv2.imwrite("./resized/" + str(counter_dict[lfw_people.target[i]]) + ".png", lfw_people.images_resized[i])
+        cv2.imwrite("./resized/id" + str(lfw_people.target[i]) + "_" + str(counter_dict[lfw_people.target[i]]) + ".png", cv2.cvtColor(lfw_people.images_resized[i] * 255.0, cv2.COLOR_RGB2BGR))
 
     print("Wrote resized images")
 
