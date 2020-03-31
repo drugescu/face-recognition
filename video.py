@@ -81,7 +81,7 @@ if os.path.exists("embeddings.npz"):
 
     for i in range(size_ids):
         size_emb = len(embeddings_file[embeddings_file.files[0]][i])
-        print("There are ", size_emb, " embeddings recorded in the database for ID ", i + 1)
+        print("There are ", size_emb - 1, " embeddings recorded in the database for ID ", i + 1)
         # print(identities[identities.files[0]][i])
 
     # Close file
@@ -100,15 +100,13 @@ else:
 # pre-roc dataset pull
 # try: "sudo pip install --upgrade certifi" and then if certificate issues continue, import ssl and _create_unverified_context
 import ssl
-
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # Slice was found empirically
-lfw_people = sklearn.datasets.fetch_lfw_people(min_faces_per_person=10, color=True, resize=1.0,
+print("Loading LFW from sklearn or disk...")
+lfw_people = sklearn.datasets.fetch_lfw_people(min_faces_per_person=1, color=True, resize=1.0,
                                                slice_=(slice(80, 188, 3), slice(80, 170, 3)))
-print("Loaded LFW dataset from sklearn.")
-print("Size = ", len(lfw_people.images))
-print("Size = ", len(lfw_people.target))
+print("Loaded LFW dataset from sklearn, size = ", len(lfw_people.images))
 print(lfw_people.target[0], ", ", lfw_people.target_names[0], ", image = ", lfw_people.images[0], " of shape = ",
       lfw_people.images[0].shape)
 lfw_people.images_resized = []
@@ -116,6 +114,7 @@ lfw_people.images_resized = []
 for i in range(len(lfw_people.images)):
     lfw_people.images_resized.append(cv2.resize(lfw_people.images[i] / 255.0, (160, 160), cv2.INTER_CUBIC))
 
+print("Cropped and resized images to 160x160.")
 print(lfw_people.target[0], ", ", lfw_people.target_names[0], ", image = ", lfw_people.images_resized[0],
       " of shape = ", lfw_people.images_resized[0].shape)
 
@@ -162,8 +161,9 @@ def saveLFW():
 # Otherwise load them
 
 # Threshold
+testing_thresholds = [0.3, 0.5, 0.65, 0.75]
 thresholds = 0.1
-print("Threshold = ", thresholds)
+print("Thresholds = ", testing_thresholds)
 
 
 # sys.exit(0)
@@ -179,6 +179,7 @@ class model_class():
 
 # model = model_class()
 
+print("Loading keras-facenet.h5 model...")
 model = load_model('keras-facenet/model/facenet_keras.h5')
 print("Loaded keras-facenet.h5 model")
 
@@ -199,6 +200,9 @@ white = (255, 255, 255)
 
 # Number of frames required for detection
 DETECTION_FRAMES = 5
+
+# Number of faces
+NUMBER_OF_FACES = 6
 
 # States of program
 STATE_PASSIVE = 0
@@ -475,6 +479,7 @@ def verify(current_face):
     # load the model
     # do this at load
     global identities
+    # should have to get threashold from this and use it
 
     result = NO_MATCH
 
@@ -484,6 +489,7 @@ def verify(current_face):
 
     # Get embedding
     embedding = get_embedding(current_face)
+    print("[Verification Menu] Veryfying current face (unlock attempt)...")
     print("Embedding = ", embedding, ", of size = ", len(embedding))
 
     # Go through database of identities and embeddings and verify yes or no
@@ -509,16 +515,20 @@ def verify(current_face):
     return result
 
 
+similarities_current = []
+
 # Interactive menu showing access granted or denied
 def verification_menu():
     global state
     global face
+    global similarities_current
 
     # Do verification
     match = verify(face[FACE_PIXELS])
+    similarities_current = match
 
     # Temporary
-    roc_analysis()
+    #roc_analysis()
 
     # sys.exit(0)
 
@@ -569,58 +579,104 @@ def verification_menu():
 # Learning State - Register a new identity
 # ----------------------------------------------------------------------------------------------------------------------
 
-def roc_analysis():
+def roc_analysis(current_id_embeddings):
     global lfw_people
     global face
     global thresholds
+    global testing_thresholds
+
+    colors = ['c', 'g', 'b', 'y']
+
+    # We are fed a number of embeddings for the current face, take the first one
+    test_emb = current_id_embeddings[0] # should generalize this to generate all pairs and run ROC on all
+    rest_emb = np.array(current_id_embeddings[1:])
+
+    # Attempt roc analysis on the following parameters
+    FPR = 0
+    recall = 0
+    gthresholds = 0
 
     # Starting ROC analysis
-    IDENTITIES_TO_ROC_AGAINST = 1200
-    predictions = model.predict(np.array(lfw_people.images_resized[0 : IDENTITIES_TO_ROC_AGAINST]))
-    print("Done with the predictions")
-    # print(predictions)
+    SLICE_BEGIN = 000
+    SLICE_END = 400
+    IDENTITIES_TO_ROC_AGAINST = slice(SLICE_BEGIN, SLICE_END)
+    SLICE_LENGTH = SLICE_END - SLICE_BEGIN
+    max_auc = -1
+    max_auc_id = 0
 
-    # Get results
-    loss = keras.losses.cosine_similarity(
-        predictions,
-        get_embedding(face[FACE_PIXELS]),
-    )
-
-    losspy = -loss.eval(session=tf.Session())
-
-    print(" Verifying identity ", id)
-    # print("   Embedding ", identities[id][emb_id])
-    print("   Cosine similarity ", losspy)
-
-    matches = [1 if x > thresholds else 0 for x in losspy]
-    print(matches)
+    # Do predictions only once
+    predictions_impostor = model.predict(np.array(lfw_people.images_resized[IDENTITIES_TO_ROC_AGAINST]))
 
     # ROC curve
-    complete_y_true = np.append(np.zeros(IDENTITIES_TO_ROC_AGAINST), np.ones(6))
-    complete_y_score = np.append(matches, np.ones(6))
-    print("ROC: y_true = ", complete_y_true, ", y_score = ", complete_y_score)
-    FPR, recall, thresholds = sklearn.metrics.roc_curve(y_true=complete_y_true, y_score=complete_y_score)
-    roc_auc = sklearn.metrics.auc(FPR, recall)
-    print("FPR = ", FPR, ", recall = ", recall)
+    for i in range(len(testing_thresholds)):
 
-    # Debug plot
-    plt.plot(FPR, recall, 'g', label='AUC %s = %0.2f' % ('model name', roc_auc))
+        # Derive embeddings
+        print("\n[ROC Analysis] Prediction ", i, " complete.")
+        print("\n[ROC Analysis] Running for threshold ", testing_thresholds[i])
+        print("[ROC Analysis] Comparing with current picture which has the embedding ", test_emb)
+        print(predictions_impostor)
+
+        # Get results of cosine similarity with current face
+        loss_impostor = keras.losses.cosine_similarity(
+            predictions_impostor,
+            test_emb
+        )
+        loss_genuine = keras.losses.cosine_similarity(
+            rest_emb,
+            test_emb
+        )
+
+        # Calculate using a short new session
+        ilosspy = -loss_impostor.eval(session = tf.compat.v1.Session())
+        glosspy = - loss_genuine.eval(session = tf.compat.v1.Session())
+        print("   Cosine similarity for impostors ", ilosspy)
+        print("   Cosine similarity for genuine ", glosspy)
+
+        # Convert to matches vector for roc_curve
+        imatches = [1 if x > testing_thresholds[i] else 0 for x in ilosspy]
+        gmatches = [1 if x > testing_thresholds[i] else 0 for x in glosspy]
+        print("Impostor similarity converted to {0,1} = ", imatches)
+        print("Genuine similarity converted to {0,1} = ", gmatches)
+        matches = np.append(imatches, gmatches)
+
+        # Add the subsection of LFW and the current identity photos
+        complete_y_true = np.append(np.zeros(SLICE_LENGTH), np.ones(NUMBER_OF_FACES - 1))
+        complete_y_score = matches
+        print("ROC: y_true = ", complete_y_true, ", y_score = ", complete_y_score)
+
+        FPR, recall, gthresholds = sklearn.metrics.roc_curve(y_true = complete_y_true, y_score = complete_y_score)
+        roc_auc = sklearn.metrics.auc(FPR, recall)
+        if roc_auc > max_auc:
+            max_auc_id = i
+            max_auc = roc_auc
+        print("FPR = ", FPR, ", recall = ", recall, ", thresholds = ", gthresholds)
+
+        # Debug plot
+        plt.plot(FPR, recall, colors[i], label='AUC' + str(i) + ' %s = %0.2f' % ('facenet', roc_auc))
+
     plt.plot([0, 1], [0, 1], 'r--')
-    plt.legend(loc='lower right')
+    plt.legend(loc = 'lower right')
     plt.ylabel('Recall')
     plt.xlabel('Fall-out')
     plt.title('ROC Curve')
     plt.show()
 
-    sys.exit(0)
+    print("Best ROC AUC = ", max_auc, " of threshold ", testing_thresholds[max_auc_id])
+    #sys.exit(0)
+
+    # Return index of best threshold
+    return max_auc_id
 
 
+# Learn a new identity - register new face
 def learning_menu():
     global state
     global counter
     global STEPS
     global face
     global identities
+    global NUMBER_OF_FACES
+    global testing_thresholds
     STEPS = 3
 
     messages = [
@@ -633,10 +689,12 @@ def learning_menu():
         ""
     ]
 
-    MAX_MESSAGES = 5
+    MAX_MESSAGES = NUMBER_OF_FACES - 1
+
     current_message = 0
     timer_tick = 0
     new_identity = []
+    best_threshold = 0
 
     while True:
 
@@ -686,18 +744,25 @@ def learning_menu():
 
         # Exit window after performing final processing - encryption on
         if current_message > MAX_MESSAGES:
+            # Queue ROC analysis
+            best_threshold = roc_analysis(new_identity)
+
             # Store embeddings
-            print(np.asarray(new_identity))
+            new_identity = np.asarray(new_identity)
+            new_identity = np.append(new_identity, testing_thresholds[best_threshold])
+            print("New identity ", new_identity)
+            print("ROC analysis yielded best threshold as = ", testing_thresholds[best_threshold])
             print("Previous identities = ", len(identities), " = ", identities)
 
             if len(identities) != 0:
-                identities = np.insert(identities, identities.shape[0], np.asarray(new_identity), axis=0)
+                identities = np.insert(identities, identities.shape[0], new_identity, axis=0)
             else:
-                identities = np.expand_dims(np.asarray(new_identity), axis=0)
-
+                identities = np.expand_dims(new_identity, axis=0)
             print("New identities = ", len(identities), " = ", identities)
-            new_identity.clear()
-            np.savez_compressed('embeddings', ids=np.asarray(identities))
+
+            #new_identity.clear()
+            new_identity = np.array([])
+            np.savez_compressed('embeddings', ids = np.asarray(identities))
             state = STATE_PASSIVE
             return
 
@@ -722,9 +787,6 @@ def learning_menu():
 
                 # Increment message and take new photo
                 current_message = current_message + 1
-
-                # Queue ROC analysis
-                roc_analysis()
 
         # Input processing
         if k == ord('q'):
