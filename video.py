@@ -21,14 +21,16 @@ import sys
 import cryptography
 from cryptography.fernet import Fernet
 import os.path
-#import tensorflow as tf
+# import tensorflow as tf
 import keras
 from keras.models import load_model
 import tensorflow as tf
 import sklearn
 import sklearn.datasets
+import sklearn.metrics
+from matplotlib import pyplot as plt
 
-#tf.enable_eager_execution()
+# tf.enable_eager_execution()
 
 print("MTCNN version :", mtcnn.__version__)
 print("Keras version :", keras.__version__)
@@ -40,18 +42,18 @@ print("Tensorflow version :", tf.__version__)
 
 # Generate a new key - do this once, write it down, and store it here ecrypted - base64 encoded key
 key = b'nP2H4k_dl2-SNeF5TpLALSbgsHBxlmpouZmriC92748='
-#key = Fernet.generate_key()
+# key = Fernet.generate_key()
 print(key)
 
 # Encryption is done like this
-#message = "my deep dark secret".encode()
-#f = Fernet(key)
-#encrypted = f.encrypt(message)
+# message = "my deep dark secret".encode()
+# f = Fernet(key)
+# encrypted = f.encrypt(message)
 
 # Decryption is done like this
-#encrypted = b"...encrypted bytes..."
-#f = Fernet(key)
-#decrypted = f.decrypt(encrypted)
+# encrypted = b"...encrypted bytes..."
+# f = Fernet(key)
+# decrypted = f.decrypt(encrypted)
 
 # Cryptographic key should be store in some other ECU of the car and shared over wire on demand, tied to vehicle ID perhaps
 # Ideally, car should connect to the internt to allow face recognition and disallow it otherwise. And store key on a server
@@ -70,9 +72,9 @@ if os.path.exists("embeddings.npz"):
     identities = np.asarray(list(embeddings_file['ids']))
     size_ids = len(embeddings_file[embeddings_file.files[0]])
     if size_ids == 1:
-        print ("There is 1 identity recorded in the database")
+        print("There is 1 identity recorded in the database")
     else:
-        print ("There are ", size_ids, " identities recorded in the database.")
+        print("There are ", size_ids, " identities recorded in the database.")
     if size_ids == 0:
         print("Error! No identities in file!")
         sys.exit(0)
@@ -80,7 +82,7 @@ if os.path.exists("embeddings.npz"):
     for i in range(size_ids):
         size_emb = len(embeddings_file[embeddings_file.files[0]][i])
         print("There are ", size_emb, " embeddings recorded in the database for ID ", i + 1)
-        #print(identities[identities.files[0]][i])
+        # print(identities[identities.files[0]][i])
 
     # Close file
     embeddings_file.close()
@@ -89,7 +91,7 @@ if os.path.exists("embeddings.npz"):
     print(identities)
 else:
     identities = np.asarray([])
-    print ("There are no embeddings recorded in the database.")
+    print("There are no embeddings recorded in the database.")
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Threshold and model
@@ -98,34 +100,39 @@ else:
 # pre-roc dataset pull
 # try: "sudo pip install --upgrade certifi" and then if certificate issues continue, import ssl and _create_unverified_context
 import ssl
+
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # Slice was found empirically
-lfw_people = sklearn.datasets.fetch_lfw_people(min_faces_per_person = 10, color = True, resize = 1.0, slice_ = (slice(80, 188, 3), slice(80, 170, 3)))
+lfw_people = sklearn.datasets.fetch_lfw_people(min_faces_per_person=10, color=True, resize=1.0,
+                                               slice_=(slice(80, 188, 3), slice(80, 170, 3)))
 print("Loaded LFW dataset from sklearn.")
 print("Size = ", len(lfw_people.images))
 print("Size = ", len(lfw_people.target))
-print(lfw_people.target[0], ", ",lfw_people.target_names[0], ", image = ",  lfw_people.images[0], " of shape = ", lfw_people.images[0].shape)
+print(lfw_people.target[0], ", ", lfw_people.target_names[0], ", image = ", lfw_people.images[0], " of shape = ",
+      lfw_people.images[0].shape)
 lfw_people.images_resized = []
 
 for i in range(len(lfw_people.images)):
     lfw_people.images_resized.append(cv2.resize(lfw_people.images[i] / 255.0, (160, 160), cv2.INTER_CUBIC))
 
-print(lfw_people.target[0], ", ",lfw_people.target_names[0], ", image = ",  lfw_people.images_resized[0], " of shape = ", lfw_people.images_resized[0].shape)
+print(lfw_people.target[0], ", ", lfw_people.target_names[0], ", image = ", lfw_people.images_resized[0],
+      " of shape = ", lfw_people.images_resized[0].shape)
 
-vstck = np.vstack(lfw_people.images_resized[30:60])
 
 # Display the resulting frame
 def debugDisplayLFW():
-    global vstck
+    # Get a portion of the faces
+    vstck = np.vstack(lfw_people.images_resized[30:60])
+
     b = False
     while b is not True:
         # Show window
         cv2.namedWindow('frameTemp', cv2.WINDOW_NORMAL)
-        #cv2_im_processed = cv2.cvtColor(lfw_people.images[0]/255.0, cv2.COLOR_RGB2BGR)
+        # cv2_im_processed = cv2.cvtColor(lfw_people.images[0]/255.0, cv2.COLOR_RGB2BGR)
 
         # Show image
-        #cv2.imshow('frameTemp', cv2_2)
+        # cv2.imshow('frameTemp', cv2_2)
         cv2.imshow('frameTemp', vstck)
 
         k = cv2.waitKey(1) & 0xFF
@@ -144,18 +151,22 @@ def saveLFW():
             counter_dict[lfw_people.target[i]] = 0
 
         counter_dict[lfw_people.target[i]] = counter_dict[lfw_people.target[i]] + 1
-        cv2.imwrite("./resized/id" + str(lfw_people.target[i]) + "_" + str(counter_dict[lfw_people.target[i]]) + ".png", cv2.cvtColor(lfw_people.images_resized[i] * 255.0, cv2.COLOR_RGB2BGR))
+        cv2.imwrite("./resized/id" + str(lfw_people.target[i]) + "_" + str(counter_dict[lfw_people.target[i]]) + ".png",
+                    cv2.cvtColor(lfw_people.images_resized[i] * 255.0, cv2.COLOR_RGB2BGR))
 
     print("Wrote resized images")
 
 
 # Call the function to save the resized images
-saveLFW()
+# saveLFW()
+# Otherwise load them
 
 # Threshold
-thresholds = 0.58
+thresholds = 0.1
 print("Threshold = ", thresholds)
-sys.exit(0)
+
+
+# sys.exit(0)
 
 # Load facenet model
 class model_class():
@@ -165,7 +176,8 @@ class model_class():
     inputs = 0
     outputs = 0
 
-#model = model_class()
+
+# model = model_class()
 
 model = load_model('keras-facenet/model/facenet_keras.h5')
 print("Loaded keras-facenet.h5 model")
@@ -199,6 +211,7 @@ state = STATE_PASSIVE
 face = 0
 FACE_PIXELS = 1
 NO_MATCH = -1
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Useful functions
@@ -449,7 +462,7 @@ def get_embedding(current_face):
     norm_face = normalize(current_face)
 
     # Expand dimensions into samples, for now only one
-    samples = np.expand_dims(norm_face, axis = 0)
+    samples = np.expand_dims(norm_face, axis=0)
 
     # Make prediction to get embedding
     yhat = model.predict(samples)
@@ -484,7 +497,7 @@ def verify(current_face):
         losspy = -loss.eval(session=tf.Session())
 
         print(" Verifying identity ", id)
-        #print("   Embedding ", identities[id][emb_id])
+        # print("   Embedding ", identities[id][emb_id])
         print("   Cosine similarity ", losspy)
 
         # How many embeddings have thresholds surpassed
@@ -499,9 +512,13 @@ def verify(current_face):
 # Interactive menu showing access granted or denied
 def verification_menu():
     global state
+    global face
 
     # Do verification
     match = verify(face[FACE_PIXELS])
+
+    # Temporary
+    roc_analysis()
 
     # sys.exit(0)
 
@@ -553,7 +570,49 @@ def verification_menu():
 # ----------------------------------------------------------------------------------------------------------------------
 
 def roc_analysis():
-    lfw_people = sklearn.datasets.fetch_lfw_people(min_faces_per_person=70, resize=0.4)
+    global lfw_people
+    global face
+    global thresholds
+
+    # Starting ROC analysis
+    IDENTITIES_TO_ROC_AGAINST = 1200
+    predictions = model.predict(np.array(lfw_people.images_resized[0 : IDENTITIES_TO_ROC_AGAINST]))
+    print("Done with the predictions")
+    # print(predictions)
+
+    # Get results
+    loss = keras.losses.cosine_similarity(
+        predictions,
+        get_embedding(face[FACE_PIXELS]),
+    )
+
+    losspy = -loss.eval(session=tf.Session())
+
+    print(" Verifying identity ", id)
+    # print("   Embedding ", identities[id][emb_id])
+    print("   Cosine similarity ", losspy)
+
+    matches = [1 if x > thresholds else 0 for x in losspy]
+    print(matches)
+
+    # ROC curve
+    complete_y_true = np.append(np.zeros(IDENTITIES_TO_ROC_AGAINST), np.ones(6))
+    complete_y_score = np.append(matches, np.ones(6))
+    print("ROC: y_true = ", complete_y_true, ", y_score = ", complete_y_score)
+    FPR, recall, thresholds = sklearn.metrics.roc_curve(y_true=complete_y_true, y_score=complete_y_score)
+    roc_auc = sklearn.metrics.auc(FPR, recall)
+    print("FPR = ", FPR, ", recall = ", recall)
+
+    # Debug plot
+    plt.plot(FPR, recall, 'g', label='AUC %s = %0.2f' % ('model name', roc_auc))
+    plt.plot([0, 1], [0, 1], 'r--')
+    plt.legend(loc='lower right')
+    plt.ylabel('Recall')
+    plt.xlabel('Fall-out')
+    plt.title('ROC Curve')
+    plt.show()
+
+    sys.exit(0)
 
 
 def learning_menu():
@@ -574,7 +633,7 @@ def learning_menu():
         ""
     ]
 
-    MAX_MESSAGES  = 5
+    MAX_MESSAGES = 5
     current_message = 0
     timer_tick = 0
     new_identity = []
@@ -632,13 +691,13 @@ def learning_menu():
             print("Previous identities = ", len(identities), " = ", identities)
 
             if len(identities) != 0:
-                identities = np.insert(identities, identities.shape[0], np.asarray(new_identity), axis = 0)
+                identities = np.insert(identities, identities.shape[0], np.asarray(new_identity), axis=0)
             else:
-                identities = np.expand_dims(np.asarray(new_identity), axis = 0)
+                identities = np.expand_dims(np.asarray(new_identity), axis=0)
 
             print("New identities = ", len(identities), " = ", identities)
             new_identity.clear()
-            np.savez_compressed('embeddings', ids = np.asarray(identities))
+            np.savez_compressed('embeddings', ids=np.asarray(identities))
             state = STATE_PASSIVE
             return
 
@@ -655,7 +714,7 @@ def learning_menu():
 
                 # Get face embedding
                 embedding = get_embedding(current_face)
-                #print("Embedding = ", embedding)
+                # print("Embedding = ", embedding)
 
                 # Append embedding to new identity
                 new_identity.append(embedding)
