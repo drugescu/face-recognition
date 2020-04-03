@@ -29,6 +29,7 @@ import sklearn
 import sklearn.datasets
 import sklearn.metrics
 from matplotlib import pyplot as plt
+import pandas as pd
 
 # tf.enable_eager_execution()
 
@@ -579,7 +580,38 @@ def verification_menu():
 # Learning State - Register a new identity
 # ----------------------------------------------------------------------------------------------------------------------
 
+def Find_Optimal_Cutoff(target, predicted):
+    """ Find the optimal probability cutoff point for a classification model related to event rate
+    Parameters
+    ----------
+    target : Matrix with dependent or target data, where rows are observations
+
+    predicted : Matrix with predicted data, where rows are observations
+
+    Returns
+    -------
+    list type, with optimal cutoff value
+
+    """
+    fpr, tpr, threshold = sklearn.metrics.roc_curve(target, predicted)
+    i = np.arange(len(tpr))
+    roc = pd.DataFrame({'tf' : pd.Series(tpr-(1-fpr), index=i), 'threshold' : pd.Series(threshold, index=i)})
+    roc_t = roc.iloc[(roc.tf-0).abs().argsort()[:1]]
+
+    return list(roc_t['threshold'])
+
+
 def roc_analysis(current_id_embeddings):
+    """Perform ROC analysis on stored lfw_people with current identity embeddings
+    Parameters
+    ----------
+    current_id-embeddings : list of 128-long embeddings (themselves tensors)
+
+    Returns
+    -------
+    integer type, with optimal cutoff value
+
+    """
     global lfw_people
     global face
     global thresholds
@@ -597,62 +629,69 @@ def roc_analysis(current_id_embeddings):
     gthresholds = 0
 
     # Starting ROC analysis
-    SLICE_BEGIN = 000
-    SLICE_END = 400
+    SLICE_BEGIN = 0
+    SLICE_END = 1000
     IDENTITIES_TO_ROC_AGAINST = slice(SLICE_BEGIN, SLICE_END)
     SLICE_LENGTH = SLICE_END - SLICE_BEGIN
     max_auc = -1
     max_auc_id = 0
 
+    i = 0
+
     # Do predictions only once
     predictions_impostor = model.predict(np.array(lfw_people.images_resized[IDENTITIES_TO_ROC_AGAINST]))
 
     # ROC curve
-    for i in range(len(testing_thresholds)):
+    #for i in range(len(testing_thresholds)):
 
-        # Derive embeddings
-        print("\n[ROC Analysis] Prediction ", i, " complete.")
-        print("\n[ROC Analysis] Running for threshold ", testing_thresholds[i])
-        print("[ROC Analysis] Comparing with current picture which has the embedding ", test_emb)
-        print(predictions_impostor)
+    # Derive embeddings
+    print("\n[ROC Analysis] Prediction ", i, " complete.")
+    #print("\n[ROC Analysis] Running for threshold ", testing_thresholds[i])
+    print("[ROC Analysis] Comparing with current picture which has the embedding ", test_emb)
+    print(predictions_impostor)
 
-        # Get results of cosine similarity with current face
-        loss_impostor = keras.losses.cosine_similarity(
-            predictions_impostor,
-            test_emb
-        )
-        loss_genuine = keras.losses.cosine_similarity(
-            rest_emb,
-            test_emb
-        )
+    # Get results of cosine similarity with current face
+    loss_impostor = keras.losses.cosine_similarity(
+        predictions_impostor,
+        test_emb
+    )
+    loss_genuine = keras.losses.cosine_similarity(
+        rest_emb,
+        test_emb
+    )
 
-        # Calculate using a short new session
-        ilosspy = -loss_impostor.eval(session = tf.compat.v1.Session())
-        glosspy = - loss_genuine.eval(session = tf.compat.v1.Session())
-        print("   Cosine similarity for impostors ", ilosspy)
-        print("   Cosine similarity for genuine ", glosspy)
+    # Calculate using a short new session
+    ilosspy = -loss_impostor.eval(session = tf.compat.v1.Session())
+    glosspy = - loss_genuine.eval(session = tf.compat.v1.Session())
+    print("   Cosine similarity for impostors ", ilosspy)
+    print("   Cosine similarity for genuine ", glosspy)
 
-        # Convert to matches vector for roc_curve
-        imatches = [1 if x > testing_thresholds[i] else 0 for x in ilosspy]
-        gmatches = [1 if x > testing_thresholds[i] else 0 for x in glosspy]
-        print("Impostor similarity converted to {0,1} = ", imatches)
-        print("Genuine similarity converted to {0,1} = ", gmatches)
-        matches = np.append(imatches, gmatches)
+    # Convert to matches vector for roc_curve
+    imatches = [1 if x > testing_thresholds[i] else 0 for x in ilosspy]
+    gmatches = [1 if x > testing_thresholds[i] else 0 for x in glosspy]
+    imatches2 = [x for x in ilosspy]
+    gmatches2 = [x for x in glosspy]
+    print("Impostor similarity converted to {0,1} = ", imatches)
+    print("Genuine similarity converted to {0,1} = ", gmatches)
+    matches = np.append(imatches, gmatches)
 
-        # Add the subsection of LFW and the current identity photos
-        complete_y_true = np.append(np.zeros(SLICE_LENGTH), np.ones(NUMBER_OF_FACES - 1))
-        complete_y_score = matches
-        print("ROC: y_true = ", complete_y_true, ", y_score = ", complete_y_score)
+    # try to do ROC on non-binary classification
+    matches = np.append(imatches2, gmatches2)
 
-        FPR, recall, gthresholds = sklearn.metrics.roc_curve(y_true = complete_y_true, y_score = complete_y_score)
-        roc_auc = sklearn.metrics.auc(FPR, recall)
-        if roc_auc > max_auc:
-            max_auc_id = i
-            max_auc = roc_auc
-        print("FPR = ", FPR, ", recall = ", recall, ", thresholds = ", gthresholds)
+    # Add the subsection of LFW and the current identity photos
+    complete_y_true = np.append(np.zeros(SLICE_LENGTH), np.ones(NUMBER_OF_FACES - 1))
+    complete_y_score = matches
+    print("ROC: y_true = ", complete_y_true, ", y_score = ", complete_y_score)
 
-        # Debug plot
-        plt.plot(FPR, recall, colors[i], label='AUC' + str(i) + ' %s = %0.2f' % ('facenet', roc_auc))
+    FPR, recall, gthresholds = sklearn.metrics.roc_curve(y_true = complete_y_true, y_score = complete_y_score)
+    roc_auc = sklearn.metrics.auc(FPR, recall)
+    if roc_auc > max_auc:
+        max_auc_id = i
+        max_auc = roc_auc
+    print("FPR = ", FPR, ", recall = ", recall, ", thresholds = ", gthresholds)
+
+    # Debug plot
+    plt.plot(FPR, recall, colors[i], label='AUC' + str(i) + ' %s = %0.2f' % ('facenet', roc_auc))
 
     plt.plot([0, 1], [0, 1], 'r--')
     plt.legend(loc = 'lower right')
@@ -662,10 +701,15 @@ def roc_analysis(current_id_embeddings):
     plt.show()
 
     print("Best ROC AUC = ", max_auc, " of threshold ", testing_thresholds[max_auc_id])
+
+    # find optimum threshold
+    optimal_cutoff = Find_Optimal_Cutoff(complete_y_true, complete_y_score)
+    print("Optimal threshold found at = ", optimal_cutoff)
+    return optimal_cutoff
     #sys.exit(0)
 
     # Return index of best threshold
-    return max_auc_id
+    #return max_auc_id
 
 
 # Learn a new identity - register new face
@@ -749,9 +793,9 @@ def learning_menu():
 
             # Store embeddings
             new_identity = np.asarray(new_identity)
-            new_identity = np.append(new_identity, testing_thresholds[best_threshold])
+            new_identity = np.append(new_identity, best_threshold)#testing_thresholds[best_threshold])
             print("New identity ", new_identity)
-            print("ROC analysis yielded best threshold as = ", testing_thresholds[best_threshold])
+            print("ROC analysis yielded best threshold as = ", best_threshold)#testing_thresholds[best_threshold])
             print("Previous identities = ", len(identities), " = ", identities)
 
             if len(identities) != 0:
